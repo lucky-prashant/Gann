@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gann Cycle Scanner</title>
+</head>
+<body>
+    <h1>Gann Cycle Scanner (NSE F&O)</h1>
+    <button onclick="scan()">Run Scan</button>
+    <pre id="output"></pre>
+    <script>
+        async function scan(){
+            document.getElementById("output").innerText = "Scanning...";
+            let res = await fetch("/scan");
+            let data = await res.json();
+            document.getElementById("output").innerText = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>
