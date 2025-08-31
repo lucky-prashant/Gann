@@ -1,70 +1,109 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-    <title>Gann Cycle Scanner</title>
-    <style>
-        body { font-family: Arial; padding: 20px; }
-        .result { margin-top: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
-        th { background: #eee; }
-    </style>
+  <meta charset="utf-8">
+  <title>Gann Decoder - Scanner</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:18px;background:#f8fafc}
+    select, button{padding:8px 12px;margin-right:8px}
+    #log{white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:12px;margin-top:12px;height:420px;overflow:auto}
+    table{border-collapse:collapse;width:100%;margin-top:12px}
+    th,td{border:1px solid #ccc;padding:6px;text-align:left;font-size:13px}
+  </style>
 </head>
 <body>
-    <h2>🔍 Gann Cycle Scanner (NSE F&O)</h2>
+  <h2>Gann Decoder - F&O Scanner</h2>
+  <p>Select group of 20 symbols and click Scan. Progress streams live below.</p>
 
-    <form id="scanForm">
-        <label>Select Stock List:</label>
-        <select name="stock_list">
-            {% for list_name in stock_lists.keys() %}
-                <option value="{{list_name}}">{{list_name}}</option>
-            {% endfor %}
-        </select>
-        <button type="submit">Scan</button>
-    </form>
+  <label>Group:</label>
+  <select id="groupSelect">
+    {% for i in range(groups|length) %}
+      <option value="{{i}}">{{groups[i]}}</option>
+    {% endfor %}
+  </select>
 
-    <div class="result">
-        <table id="resultsTable">
-            <thead>
-                <tr>
-                    <th>Symbol</th>
-                    <th>Cycle Length</th>
-                    <th>Next Entry</th>
-                    <th>Exit Date</th>
-                    <th>Trend</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-    </div>
+  <label>Tolerance (± days):</label>
+  <input id="tolerance" type="number" value="6" style="width:72px" />
 
-    <script>
-        document.getElementById("scanForm").onsubmit = async (e) => {
-            e.preventDefault();
-            let formData = new FormData(e.target);
-            let res = await fetch("/scan", { method: "POST", body: formData });
-            let data = await res.json();
+  <button id="scanBtn">Scan</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="downloadBtn">Download CSV</button>
 
-            let tbody = document.querySelector("#resultsTable tbody");
-            tbody.innerHTML = "";
+  <div id="log"></div>
 
-            if (data.status === "ok") {
-                data.results.forEach(r => {
-                    let row = `<tr>
-                        <td>${r.symbol}</td>
-                        <td>${r.cycle_length || ""}</td>
-                        <td>${r.next_entry || ""}</td>
-                        <td>${r.exit_date || ""}</td>
-                        <td>${r.trend || ""}</td>
-                        <td>${r.error ? r.error : "OK"}</td>
-                    </tr>`;
-                    tbody.innerHTML += row;
-                });
-            } else {
-                tbody.innerHTML = `<tr><td colspan="6">Error: ${data.message}</td></tr>`;
-            }
-        };
-    </script>
+  <h3>Last saved predictions</h3>
+  <div id="history"></div>
+
+  <script>
+    const scanBtn = document.getElementById('scanBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const logEl = document.getElementById('log');
+    const groupSelect = document.getElementById('groupSelect');
+    const toleranceEl = document.getElementById('tolerance');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    let evtSource = null;
+
+    function appendLog(txt){
+      logEl.textContent += txt + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function startScan(){
+      const group_idx = parseInt(groupSelect.value);
+      const tolerance = parseInt(toleranceEl.value);
+      scanBtn.disabled = true; stopBtn.disabled = false;
+      logEl.textContent = '';
+      // initiate scan via POST to start generator
+      fetch('/scan_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({group_idx, tolerance})})
+        .catch(e=>{ appendLog('Scan POST error: '+e); scanBtn.disabled=false; stopBtn.disabled=true; });
+
+      if(evtSource) evtSource.close();
+      evtSource = new EventSource('/scan_stream');
+      evtSource.onmessage = function(e){
+        try{
+          const data = JSON.parse(e.data);
+          if(data.event === 'start'){
+            appendLog('[START] ' + data.message);
+          } else if(data.event === 'progress'){
+            appendLog('[PROGRESS] ' + data.message);
+          } else if(data.event === 'result'){
+            appendLog('[RESULT] ' + data.symbol + ' -> ' + (data.result.status || JSON.stringify(data.result)));
+          } else if(data.event === 'done'){
+            appendLog('[DONE] ' + data.message);
+            evtSource.close(); scanBtn.disabled=false; stopBtn.disabled=true; loadHistory();
+          } else {
+            appendLog('[EVENT] ' + e.data);
+          }
+        }catch(err){
+          appendLog('parse error: ' + e.data);
+        }
+      };
+      evtSource.onerror = function(e){
+        appendLog('EventSource error or connection closed.'); scanBtn.disabled=false; stopBtn.disabled=true;
+        if(evtSource) evtSource.close();
+      };
+    }
+
+    scanBtn.onclick = startScan;
+    stopBtn.onclick = function(){ if(evtSource) evtSource.close(); scanBtn.disabled=false; stopBtn.disabled=true; appendLog('Scan stopped by user.'); };
+    downloadBtn.onclick = function(){ window.location = '/download_results'; };
+
+    async function loadHistory(){
+      try{
+        const r = await fetch('/history');
+        const data = await r.json();
+        if(!data || data.length===0){ document.getElementById('history').innerHTML = '<i>No results saved yet.</i>'; return; }
+        let html = '<table><tr><th>Symbol</th><th>Cycle</th><th>Predicted Date</th><th>Type</th><th>Hit Rate</th><th>Saved At</th></tr>';
+        data.forEach(d=>{
+          html += `<tr><td>${d.symbol||''}</td><td>${d.cycle||''}</td><td>${d.predicted_date||''}</td><td>${d.type||''}</td><td>${d.hit_rate||''}</td><td>${d.saved_at||''}</td></tr>`;
+        });
+        html += '</table>';
+        document.getElementById('history').innerHTML = html;
+      }catch(e){ console.error(e); }
+    }
+
+    loadHistory();
+  </script>
 </body>
 </html>
