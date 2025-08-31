@@ -2,18 +2,69 @@
 <html>
 <head>
     <title>Gann Cycle Scanner</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .result { margin-top: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #eee; }
+    </style>
 </head>
 <body>
-    <h1>Gann Cycle Scanner (NSE F&O)</h1>
-    <button onclick="scan()">Run Scan</button>
-    <pre id="output"></pre>
+    <h2>🔍 Gann Cycle Scanner (NSE F&O)</h2>
+
+    <form id="scanForm">
+        <label>Select Stock List:</label>
+        <select name="stock_list">
+            {% for list_name in stock_lists.keys() %}
+                <option value="{{list_name}}">{{list_name}}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Scan</button>
+    </form>
+
+    <div class="result">
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Cycle Length</th>
+                    <th>Next Entry</th>
+                    <th>Exit Date</th>
+                    <th>Trend</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
     <script>
-        async function scan(){
-            document.getElementById("output").innerText = "Scanning...";
-            let res = await fetch("/scan");
+        document.getElementById("scanForm").onsubmit = async (e) => {
+            e.preventDefault();
+            let formData = new FormData(e.target);
+            let res = await fetch("/scan", { method: "POST", body: formData });
             let data = await res.json();
-            document.getElementById("output").innerText = JSON.stringify(data, null, 2);
-        }
+
+            let tbody = document.querySelector("#resultsTable tbody");
+            tbody.innerHTML = "";
+
+            if (data.status === "ok") {
+                data.results.forEach(r => {
+                    let row = `<tr>
+                        <td>${r.symbol}</td>
+                        <td>${r.cycle_length || ""}</td>
+                        <td>${r.next_entry || ""}</td>
+                        <td>${r.exit_date || ""}</td>
+                        <td>${r.trend || ""}</td>
+                        <td>${r.error ? r.error : "OK"}</td>
+                    </tr>`;
+                    tbody.innerHTML += row;
+                });
+            } else {
+                tbody.innerHTML = `<tr><td colspan="6">Error: ${data.message}</td></tr>`;
+            }
+        };
     </script>
 </body>
 </html>
